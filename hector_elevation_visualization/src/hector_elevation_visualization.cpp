@@ -5,30 +5,70 @@
 #define MAP_IDX(sx, i, j) ((sx) * (j) + (i))
 
 
-ElevationVisualization::ElevationVisualization(): nHandle("~")
+ElevationVisualization::ElevationVisualization(ros::NodeHandle& nHandle)
 {
-    nHandle.param("max_height_levels",max_height_levels,10); //[cell]
-    nHandle.param("min_height",min_height,-1.0); //[m]
-    nHandle.param("max_height",max_height,1.5); //[m]
-    nHandle.param("color_factor",color_factor,0.8); //[]
+    ros::NodeHandle nHandle_private("~");
+    nHandle_private.param("max_height_levels",max_height_levels,10); //[cell]
+    nHandle_private.param("min_height",min_height,-1.0); //[m]
+    nHandle_private.param("max_height",max_height,1.5); //[m]
+    nHandle_private.param("color_factor",color_factor,0.8); //[]
     double r, g, b, a;
-    nHandle.param("color/r", r, 0.0);
-    nHandle.param("color/g", g, 0.0);
-    nHandle.param("color/b", b, 1.0);
-    nHandle.param("color/a", a, 1.0);
+    nHandle_private.param("color/r", r, 0.0);
+    nHandle_private.param("color/g", g, 0.0);
+    nHandle_private.param("color/b", b, 1.0);
+    nHandle_private.param("color/a", a, 1.0);
     marker_color.r = r;
     marker_color.g = g;
     marker_color.b = b;
     marker_color.a = a;
-    nHandle.param("use_color_map", use_color_map, true); //[]
+    nHandle_private.param("use_color_map", use_color_map, true); //[]
 
-    nHandle.param("elevation_map_frame_id", elevation_map_frame_id,std::string("/elevation_map_local"));
-    nHandle.param("paramSysMsgTopic", sys_msg_topic, std::string("/syscommand"));
+    nHandle_private.param("elevation_map_frame_id", elevation_map_frame_id,std::string("/elevation_map_local"));
+    // Added by Mohsen
+    resolution_xy = 0.05;
+    origin_x = 0.493;//-1
+    origin_y = -2.5;//-3
+    costmap_x_size = 5.0;
+    costmap_y_size = 5.0;
+    nHandle_private.param("map_frame_id", map_frame_id,std::string("/map"));
+    nHandle_private.param("base_frame_id", base_frame_id,std::string("/base_link"));
+    // Adding the costmap 
+    
+    nHandleP = &nHandle;
+    ROS_WARN("Elevation costmap is initialized!");
+    elevation_topic_name = "/elevation_costmap";
+
+    cell_elevation_x = floor (costmap_x_size/resolution_xy);
+    cell_elevation_y = floor (costmap_y_size/resolution_xy);
+    //ROS_INFO_ONCE("cell_elevation_x: %d,   cell_elevation_y: %d   ", cell_elevation_x, cell_elevation_y);
+
+
+    elev_map.header.frame_id = std::string("base_link");
+    elev_map.info.resolution = resolution_xy;
+    elev_map.info.width = cell_elevation_x;
+    elev_map.info.height = cell_elevation_y;
+    elev_map.info.origin.position.x = origin_x;
+    elev_map.info.origin.position.y = origin_y;
+    elev_map.info.origin.position.z = 0.0;
+    elev_map.info.origin.orientation.x = 0.0;
+    elev_map.info.origin.orientation.y = 0.0;
+    elev_map.info.origin.orientation.z = 0.0;
+    elev_map.info.origin.orientation.w = 1.0;
+    elev_map.data = std::vector<int8_t> (cell_elevation_x*cell_elevation_y);
+
+    Init_map();
+    //End
+    nHandle_private.param("paramSysMsgTopic", sys_msg_topic, std::string("/syscommand"));
 
     map_marker_array_publisher = nHandle.advertise<visualization_msgs::MarkerArray>("elevation_map_marker_array", 1,true);
 
+    Map_publisher = nHandle.advertise<nav_msgs::OccupancyGrid>("/elevation_costmap", 1,true);
+    EcostmapMeta_publisher = nHandle.advertise<hector_elevation_visualization::EcostmapMetaData>("/elevation_costmap_MetaData", 1);
+
     sub_elevation_map = nHandle.subscribe(elevation_map_frame_id,1,&ElevationVisualization::map_callback,this);
     sub_sys_message_callback = nHandle.subscribe(sys_msg_topic,1,&ElevationVisualization::sys_message_callback,this);
+    sub_CloudMetaData = nHandle.subscribe("RL_cloud_MetaData",1,&ElevationVisualization::CloudMetaData_cb,this);
+
 
     dyn_rec_server_.setCallback(boost::bind(&ElevationVisualization::dynRecParamCallback, this, _1, _2));
 
@@ -47,11 +87,11 @@ void ElevationVisualization::dynRecParamCallback(hector_elevation_visualization:
     max_height = config.max_height;
     color_factor = config.color_factor;
     use_color_map = config.use_color_map;
-
+    
     if(std::strcmp(elevation_map_frame_id.c_str(),(config.elevation_map_frame_id).c_str()))
     {
         elevation_map_frame_id = config.elevation_map_frame_id;
-
+	
         sub_elevation_map = nHandle.subscribe(elevation_map_frame_id,1,&ElevationVisualization::map_callback,this);
     }
 }
@@ -59,25 +99,60 @@ void ElevationVisualization::dynRecParamCallback(hector_elevation_visualization:
 
 void ElevationVisualization::visualize_map(const hector_elevation_msgs::ElevationGrid& elevation_map, tf::StampedTransform local_map_transform)
 {
+    
     int current_height_level;
+    double elevation_cost;
+    double height_max = 0.5;
+    double height_min = -3.0;
+    unsigned int index_x_cell;
+    unsigned int index_y_cell;
+    // Updating OccupancyGrid MetaData
+    elev_map.info.width = cell_elevation_x;
+    elev_map.info.height = cell_elevation_y;
 
-    for (unsigned i = 0; i < map_marker_array_msg.markers.size(); ++i)
+    elev_map.info.origin.position.x = origin_x;
+    elev_map.info.origin.position.y = origin_y;
+
+    // EcostmapMetaData msg
+    ecostmap_meta.elevation_min = elevation_map.info.min_elevation;
+    ecostmap_meta.elevation_max = elevation_map.info.max_elevation;
+    ecostmap_meta.cost_resolution = 254.00/(ecostmap_meta.elevation_max - ecostmap_meta.elevation_min);
+    ecostmap_meta.zero_elevation_cost = fabs(ecostmap_meta.elevation_min*ecostmap_meta.cost_resolution);
+    ecostmap_meta.origin_x = origin_x;
+    ecostmap_meta.origin_y = origin_y; 
+    ecostmap_meta.x_size = costmap_x_size;
+    ecostmap_meta.y_size = costmap_y_size;
+
+
+    int x_offset = 10; //Distance between laser and base_link
+    int8_t map_cost;
+   
+    
+
+    if (fabs(costmap_x_size - costmap_y_size)>0.001)
     {
-        map_marker_array_msg.markers[i].points.clear();
+        ROS_ERROR("The Point Cloud has to have square bounds in x-y plane, Message is Skipped");
+        ROS_WARN("/elevation_costmap will not being published!");
+        return;
     }
-    map_marker_array_msg.markers.clear();
-
-
-    // each array stores all cubes of one height level:
-    map_marker_array_msg.markers.resize(max_height_levels+1);
-
     for (int index_y = 0; index_y < (int)elevation_map.info.height; ++index_y)
     {
+	
+        //index_y_cell = index_y - 511 + floor(cell_elevation_y/2);
+	    if ( (index_y - 511 + floor(cell_elevation_y/2)) > 0)
+        	index_y_cell = index_y - 511 + floor(cell_elevation_y/2);
+	    else
+		    index_y_cell = 1;
+	    //debug
+	
+	    if (index_y_cell > cell_elevation_y) index_y_cell = cell_elevation_y;
         for (int index_x = 0; index_x < (int)elevation_map.info.width; ++index_x)
         {
             // visualize only known cells
+	    
             if(elevation_map.data[MAP_IDX(elevation_map.info.width, index_x, index_y)] != (int16_t)-elevation_map.info.zero_elevation)
-            {
+            //if(true)
+	        {
                 geometry_msgs::Point cube_center;
                 Eigen::Vector2f index_map(index_x, index_y);
                 Eigen::Vector2f index_world = world_map_transform.getC1Coords(index_map);
@@ -85,55 +160,73 @@ void ElevationVisualization::visualize_map(const hector_elevation_msgs::Elevatio
                 cube_center.x = index_world(0);//+elevation_map.info.resolution_xy/2.0;
                 cube_center.y = index_world(1);//+elevation_map.info.resolution_xy/2.0;
                 cube_center.z = (elevation_map.data[MAP_IDX(elevation_map.info.width, index_x, index_y)]-elevation_map.info.zero_elevation)*elevation_map.info.resolution_z;
-                current_height_level = max_height_levels/2+(int)round(std::min(std::max((double)cube_center.z+local_map_transform.getOrigin().z(), -(double)max_height), (double)max_height)*(double)max_height_levels/((double)max_height*2.0f));
-                map_marker_array_msg.markers[current_height_level].points.push_back(cube_center);
+		
+		        elevation_cost = floor ( 255/(height_max - height_min)*(cube_center.z - height_min) );
+		        //ROS_INFO("elevation_cost = %f",elevation_cost);
+		        elevation_cost = std::min(elevation_cost,254.0);
+		        elevation_cost = std::max(elevation_cost,0.0);
+		        map_cost = (int8_t) floor(elevation_cost/254*100);
+		        //ROS_INFO("map cost = %d",map_cost);
+		
+		
 
-                if(use_color_map)
-                {
-                    double h = (1.0 - std::min(std::max((cube_center.z-min_height)/ (max_height - min_height), 0.0), 1.0)) *color_factor;
-                    map_marker_array_msg.markers[current_height_level].colors.push_back(heightMapColor(h));
-                }
+		
+		        if (index_x - 511 - x_offset > 0)
+			        index_x_cell = index_x - 511 - x_offset;
+		        else
+			        index_x_cell = 1;
+		        if (index_x_cell > cell_elevation_x) index_x_cell = cell_elevation_x;
+		
+		
+                if ((0 < index_x_cell) && (index_x_cell <= cell_elevation_x) && (0 < index_y_cell) && (index_y_cell <= cell_elevation_y))
+		        {
+			        setCost(index_x_cell,index_y_cell,map_cost);			
+		        }
+		
             }
         }
+	
     }
-
-    for (unsigned i = 0; i < map_marker_array_msg.markers.size(); ++i)
-    {
-        std::stringstream ss;
-        ss <<"Level "<<i;
-        map_marker_array_msg.markers[i].ns = ss.str();
-        map_marker_array_msg.markers[i].id = i;
-        map_marker_array_msg.markers[i].header.frame_id = "/map";
-        map_marker_array_msg.markers[i].header.stamp =  elevation_map.header.stamp;
-        map_marker_array_msg.markers[i].lifetime = ros::Duration();
-        map_marker_array_msg.markers[i].type = visualization_msgs::Marker::CUBE_LIST;
-        map_marker_array_msg.markers[i].scale.x = elevation_map.info.resolution_xy;
-        map_marker_array_msg.markers[i].scale.y = elevation_map.info.resolution_xy;
-        map_marker_array_msg.markers[i].scale.z = elevation_map.info.resolution_z;
-        map_marker_array_msg.markers[i].color = marker_color;
-
-        if (map_marker_array_msg.markers[i].points.size() > 0)
-            map_marker_array_msg.markers[i].action = visualization_msgs::Marker::ADD;
-        else
-            map_marker_array_msg.markers[i].action = visualization_msgs::Marker::DELETE;
-    }
+    elev_map.header.stamp = ros::Time::now();
+	elev_map.header.frame_id = std::string("/base_link");
+	Map_publisher.publish(elev_map);
+    EcostmapMeta_publisher.publish(ecostmap_meta);
 
 }
+void ElevationVisualization::CloudMetaData_cb(const pc_maker::CloudMetaData::Ptr msg)
+{
+    cell_elevation_x = floor (msg->x_max/resolution_xy);
+    cell_elevation_y = floor (2*(msg->y_max)/resolution_xy);
+    if(fabs( costmap_x_size - msg->x_max) > 0.001)
+    {
+        elev_map.data = std::vector<int8_t> (cell_elevation_x*cell_elevation_y);
+        // Initializing OccupancyGrid with "unkown value"" (-1)
+        Init_map();
+    }
+    costmap_x_size = msg->x_max;
+    costmap_y_size = 2*(msg->y_max);
 
+    origin_y = -msg->y_max;
+    elev_map.info.width = cell_elevation_x;
+    elev_map.info.height = cell_elevation_y;
+    elev_map.info.origin.position.x = origin_x;
+    elev_map.info.origin.position.y = origin_y;
+   
+}
 
 void ElevationVisualization::map_callback(const hector_elevation_msgs::ElevationGrid& elevation_map)
 {
+    //ROS_ERROR("height: %f, width: %f, res: %f",elevation_map.info.height,elevation_map.info.width,elevation_map.info.resolution_xy);
     // Visualization of Elevation Map
-    if(map_marker_array_publisher.getNumSubscribers () > 0)
-    {
+    
         tf::TransformListener listener;
         tf::StampedTransform local_map_transform;
 
         // get local map transform
         try
         {
-            listener.waitForTransform("/base_footprint", "/map",ros::Time(0),ros::Duration(5.0));
-            listener.lookupTransform("/base_footprint", "/map", ros::Time(0), local_map_transform);
+            listener.waitForTransform(base_frame_id, map_frame_id,ros::Time(0),ros::Duration(5.0));
+            listener.lookupTransform(base_frame_id, map_frame_id, ros::Time(0), local_map_transform);
         }
         catch (tf::TransformException ex)
         {
@@ -153,10 +246,12 @@ void ElevationVisualization::map_callback(const hector_elevation_msgs::Elevation
         // visualize map
         visualize_map(elevation_map, local_map_transform);
 
+	//Publish costmap
+	//elevation_grid_ros->publishCostmap();
 
         // publish map
-        map_marker_array_publisher.publish(map_marker_array_msg);
-    }
+        //map_marker_array_publisher.publish(map_marker_array_msg);
+    
 }
 
 void ElevationVisualization::sys_message_callback(const std_msgs::String& string)
@@ -173,6 +268,22 @@ void ElevationVisualization::sys_message_callback(const std_msgs::String& string
         }
         map_marker_array_msg.markers.clear();
     }
+}
+
+void ElevationVisualization::setCost(unsigned int i, unsigned int j, int8_t cost)
+{
+	int index = i + cell_elevation_y*j;
+	//ROS_INFO("index: %d",index);
+ 	if(index > 0 && index < (cell_elevation_x * cell_elevation_y) )// (costmap_y_size * costmap_x_size)
+  		elev_map.data[index] = cost;
+	//else
+	//	ROS_ERROR("Undisred index: %d", index);
+}
+
+void ElevationVisualization::Init_map()
+{
+	for(int i = 0; i < elev_map.info.width * elev_map.info.height; i++)
+		elev_map.data[i] = -1;
 }
 
 std_msgs::ColorRGBA ElevationVisualization::heightMapColor(double h)

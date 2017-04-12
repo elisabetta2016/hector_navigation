@@ -4,8 +4,9 @@
 int main (int argc, char** argv)
 {
     ros::init(argc,argv,"elevation_visualization");
+    ros::NodeHandle node;
 
-    ElevationVisualization elevationVisualization;
+    ElevationVisualization elevationVisualization(node);
 
     return (-1);
-}
+} 

@@ -17,12 +17,21 @@
 
 #include <hector_map_tools/HectorMapTools.h>
 
+#include <costmap_2d/layer.h>
+#include <costmap_2d/costmap_2d_ros.h>
+#include <costmap_2d/costmap_2d_publisher.h>
+
+#include <nav_msgs/OccupancyGrid.h>
+
+#include <pc_maker/CloudMetaData.h>
+
+#include <hector_elevation_visualization/EcostmapMetaData.h>
 
 class ElevationVisualization{
 
 public:
     /// Default constructor
-    ElevationVisualization();
+    ElevationVisualization(ros::NodeHandle& nHandle);
 
     /// Default deconstructor
     ~ElevationVisualization();
@@ -32,6 +41,7 @@ public:
     * \param [in] config contains current parameters
     * \param [in] level is unused
     */
+
     void dynRecParamCallback(hector_elevation_visualization::ElevationVisualizationConfig &config, uint32_t level);
 
     /// sysMessageCallback This function listen to system messages
@@ -44,14 +54,20 @@ public:
     /**
     * \param [in] elevation_map_msg stores elevation map data as a 2.5D grid
     */
+    void CloudMetaData_cb(const pc_maker::CloudMetaData::Ptr msg);
     void map_callback(const hector_elevation_msgs::ElevationGrid& elevation_map);
 
 private:
     ros::NodeHandle nHandle;
+    ros::NodeHandle* nHandleP;
 
     ros::Subscriber sub_elevation_map;
     ros::Subscriber sub_sys_message_callback;
+    ros::Subscriber sub_CloudMetaData; 
+
     ros::Publisher map_marker_array_publisher;
+    ros::Publisher Map_publisher;
+    ros::Publisher EcostmapMeta_publisher;
 
     dynamic_reconfigure::Server<hector_elevation_visualization::ElevationVisualizationConfig> dyn_rec_server_;
 
@@ -59,7 +75,7 @@ private:
 
     HectorMapTools::CoordinateTransformer<float> world_map_transform;
 
-    std::string elevation_map_frame_id,sys_msg_topic;
+    std::string elevation_map_frame_id,sys_msg_topic,map_frame_id,base_frame_id;
 
     int max_height_levels;
 
@@ -81,4 +97,21 @@ private:
     * \param [in] h The height in [m]
     */
     static std_msgs::ColorRGBA heightMapColor(double h);
+
+protected:
+    void setCost(unsigned int x, unsigned int y, int8_t cost);
+    void Init_map();
+    //costmap_2d::Costmap2D* elevation_grid_;
+    //costmap_2d::Costmap2DPublisher* elevation_grid_ros;
+    double resolution_xy;
+    double origin_x;
+    double origin_y;
+    double costmap_x_size;
+    double costmap_y_size;
+    unsigned int cell_elevation_x;
+    unsigned int cell_elevation_y;
+    std::string elevation_topic_name;
+    nav_msgs::OccupancyGrid elev_map;
+    hector_elevation_visualization::EcostmapMetaData ecostmap_meta;
+
 };
