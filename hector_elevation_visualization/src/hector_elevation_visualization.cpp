@@ -160,7 +160,13 @@ void ElevationVisualization::visualize_map(const hector_elevation_msgs::Elevatio
                 cube_center.x = index_world(0);//+elevation_map.info.resolution_xy/2.0;
                 cube_center.y = index_world(1);//+elevation_map.info.resolution_xy/2.0;
                 cube_center.z = (elevation_map.data[MAP_IDX(elevation_map.info.width, index_x, index_y)]-elevation_map.info.zero_elevation)*elevation_map.info.resolution_z;
-		
+                current_height_level = max_height_levels/2+(int)round(std::min(std::max((double)cube_center.z+local_map_transform.getOrigin().z(), -(double)max_height), (double)max_height)*(double)max_height_levels/((double)max_height*2.0f));
+                map_marker_array_msg.markers[current_height_level].points.push_back(cube_center);
+                if(use_color_map)
+                {
+                    double h = (1.0 - std::min(std::max((cube_center.z-min_height)/ (max_height - min_height), 0.0), 1.0)) *color_factor;
+                    map_marker_array_msg.markers[current_height_level].colors.push_back(heightMapColor(h));
+                }
 		        elevation_cost = floor ( 255/(height_max - height_min)*(cube_center.z - height_min) );
 		        //ROS_INFO("elevation_cost = %f",elevation_cost);
 		        elevation_cost = std::min(elevation_cost,254.0);
@@ -250,7 +256,7 @@ void ElevationVisualization::map_callback(const hector_elevation_msgs::Elevation
 	//elevation_grid_ros->publishCostmap();
 
         // publish map
-        //map_marker_array_publisher.publish(map_marker_array_msg);
+        map_marker_array_publisher.publish(map_marker_array_msg);
     
 }
 
