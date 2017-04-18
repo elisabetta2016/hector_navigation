@@ -127,7 +127,17 @@ void ElevationVisualization::visualize_map(const hector_elevation_msgs::Elevatio
     int x_offset = 10; //Distance between laser and base_link
     int8_t map_cost;
    
-    
+
+
+    for (unsigned i = 0; i < map_marker_array_msg.markers.size(); ++i)
+    {
+        map_marker_array_msg.markers[i].points.clear();
+    }
+    map_marker_array_msg.markers.clear();
+
+
+    // each array stores all cubes of one height level:
+    map_marker_array_msg.markers.resize(max_height_levels+1);
 
     if (fabs(costmap_x_size - costmap_y_size)>0.001)
     {
@@ -194,9 +204,30 @@ void ElevationVisualization::visualize_map(const hector_elevation_msgs::Elevatio
 	
     }
     elev_map.header.stamp = ros::Time::now();
-	elev_map.header.frame_id = std::string("/base_link");
-	Map_publisher.publish(elev_map);
+    elev_map.header.frame_id = std::string("/base_link");
+    Map_publisher.publish(elev_map);
     EcostmapMeta_publisher.publish(ecostmap_meta);
+
+    for (unsigned i = 0; i < map_marker_array_msg.markers.size(); ++i)
+    {
+        std::stringstream ss;
+        ss <<"Level "<<i;
+        map_marker_array_msg.markers[i].ns = ss.str();
+        map_marker_array_msg.markers[i].id = i;
+        map_marker_array_msg.markers[i].header.frame_id = "/base_link";
+        map_marker_array_msg.markers[i].header.stamp =  elevation_map.header.stamp;
+        map_marker_array_msg.markers[i].lifetime = ros::Duration();
+        map_marker_array_msg.markers[i].type = visualization_msgs::Marker::CUBE_LIST;
+        map_marker_array_msg.markers[i].scale.x = elevation_map.info.resolution_xy;
+        map_marker_array_msg.markers[i].scale.y = elevation_map.info.resolution_xy;
+        map_marker_array_msg.markers[i].scale.z = elevation_map.info.resolution_z;
+        map_marker_array_msg.markers[i].color = marker_color;
+
+        if (map_marker_array_msg.markers[i].points.size() > 0)
+            map_marker_array_msg.markers[i].action = visualization_msgs::Marker::ADD;
+        else
+            map_marker_array_msg.markers[i].action = visualization_msgs::Marker::DELETE;
+    }
 
 }
 void ElevationVisualization::CloudMetaData_cb(const pc_maker::CloudMetaData::Ptr msg)
