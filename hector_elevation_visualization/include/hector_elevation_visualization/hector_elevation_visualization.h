@@ -17,13 +17,15 @@
 
 #include <hector_map_tools/HectorMapTools.h>
 
-#include <costmap_2d/layer.h>
-#include <costmap_2d/costmap_2d_ros.h>
-#include <costmap_2d/costmap_2d_publisher.h>
+//#include <costmap_2d/layer.h>
+//#include <costmap_2d/costmap_2d_ros.h>
+//#include <costmap_2d/costmap_2d_publisher.h>
 
 #include <nav_msgs/OccupancyGrid.h>
 
 #include <pc_maker/CloudMetaData.h>
+
+#include <costmap/costmap.h>
 
 #include <hector_elevation_visualization/EcostmapMetaData.h>
 
@@ -97,6 +99,7 @@ private:
     * \param [in] h The height in [m]
     */
     static std_msgs::ColorRGBA heightMapColor(double h);
+    costmap *elev_c_map;
 
 protected:
     void setCost(unsigned int x, unsigned int y, int8_t cost);

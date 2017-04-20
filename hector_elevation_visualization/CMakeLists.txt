@@ -12,7 +12,7 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   tf
   visualization_msgs
-  costmap_2d
+  costmap
   message_generation
 )
 generate_dynamic_reconfigure_options(cfg/ElevationVisualization.cfg)
@@ -90,7 +90,7 @@ generate_messages(
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
   INCLUDE_DIRS include
-#  LIBRARIES hector_elevation_visualization
+  LIBRARIES costmap2d #hector_elevation_visualization
   CATKIN_DEPENDS dynamic_reconfigure hector_elevation_msgs hector_map_tools roscpp tf visualization_msgs message_runtime
   DEPENDS system_lib eigen
 )
@@ -104,6 +104,7 @@ catkin_package(
 include_directories(
   include
   ${catkin_INCLUDE_DIRS}
+  ${costmap_INCLUDE_DIRS}
 )
 
 ## Declare a cpp library
@@ -120,7 +121,7 @@ add_executable(hector_elevation_visualization_node src/hector_elevation_visualiz
 add_dependencies(hector_elevation_visualization_node hector_elevation_msgs_generate_messages_cpp)
 
 ## Specify libraries to link a library or executable target against
-target_link_libraries(hector_elevation_visualization_node
+target_link_libraries(hector_elevation_visualization_node costmap2d
   ${catkin_LIBRARIES}
 )
 

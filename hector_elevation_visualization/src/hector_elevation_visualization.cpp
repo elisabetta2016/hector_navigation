@@ -30,6 +30,8 @@ ElevationVisualization::ElevationVisualization(ros::NodeHandle& nHandle)
     origin_y = -2.5;//-3
     costmap_x_size = 5.0;
     costmap_y_size = 5.0;
+    //elev_c_map = new costmap(double x_orig_,double y_orig_,unsigned int cell_x_size_,unsigned int cell_y_size_,float resolution_,std::string frame_id_,bool show_debug_);
+    elev_c_map = new costmap(origin_x,origin_y,(int) abs(costmap_x_size/resolution_xy),(int) abs(costmap_y_size/resolution_xy),resolution_xy,"/base_link",false);
     nHandle_private.param("map_frame_id", map_frame_id,std::string("/map"));
     nHandle_private.param("base_frame_id", base_frame_id,std::string("/base_link"));
     // Adding the costmap 
@@ -57,6 +59,8 @@ ElevationVisualization::ElevationVisualization(ros::NodeHandle& nHandle)
     elev_map.data = std::vector<int8_t> (cell_elevation_x*cell_elevation_y);
 
     Init_map();
+
+
     //End
     nHandle_private.param("paramSysMsgTopic", sys_msg_topic, std::string("/syscommand"));
 
@@ -104,6 +108,10 @@ void ElevationVisualization::visualize_map(const hector_elevation_msgs::Elevatio
     double elevation_cost;
     double height_max = 0.5;
     double height_min = -3.0;
+    if(!ros::param::get("/ElevationMappingNode/max_observable_elevation",height_max))
+      ROS_ERROR("Param /ElevationMappingNode/max_observable_elevation  not found!");
+    if(!ros::param::get("/ElevationMappingNode/min_observable_elevation",height_min))
+      ROS_ERROR("Param /ElevationMappingNode/min_observable_elevation  not found!");
     unsigned int index_x_cell;
     unsigned int index_y_cell;
     // Updating OccupancyGrid MetaData
@@ -122,7 +130,10 @@ void ElevationVisualization::visualize_map(const hector_elevation_msgs::Elevatio
     ecostmap_meta.origin_y = origin_y; 
     ecostmap_meta.x_size = costmap_x_size;
     ecostmap_meta.y_size = costmap_y_size;
-
+    ros::NodeHandle nHl;
+    // e_cost = a.z - b
+    nHl.setParam("e_cost_a_coeff", 255/(height_max - height_min) );
+    nHl.setParam("e_cost_b_coeff", 255*height_min/(height_max - height_min));
 
     int x_offset = 10; //Distance between laser and base_link
     int8_t map_cost;
@@ -146,9 +157,8 @@ void ElevationVisualization::visualize_map(const hector_elevation_msgs::Elevatio
         return;
     }
     for (int index_y = 0; index_y < (int)elevation_map.info.height; ++index_y)
-    {
-	
-        //index_y_cell = index_y - 511 + floor(cell_elevation_y/2);
+    {	
+      //index_y_cell = index_y - 511 + floor(cell_elevation_y/2);
 	    if ( (index_y - 511 + floor(cell_elevation_y/2)) > 0)
         	index_y_cell = index_y - 511 + floor(cell_elevation_y/2);
 	    else
@@ -162,7 +172,7 @@ void ElevationVisualization::visualize_map(const hector_elevation_msgs::Elevatio
 	    
             if(elevation_map.data[MAP_IDX(elevation_map.info.width, index_x, index_y)] != (int16_t)-elevation_map.info.zero_elevation)
             //if(true)
-	        {
+            {
                 geometry_msgs::Point cube_center;
                 Eigen::Vector2f index_map(index_x, index_y);
                 Eigen::Vector2f index_world = world_map_transform.getC1Coords(index_map);
@@ -177,34 +187,32 @@ void ElevationVisualization::visualize_map(const hector_elevation_msgs::Elevatio
                     double h = (1.0 - std::min(std::max((cube_center.z-min_height)/ (max_height - min_height), 0.0), 1.0)) *color_factor;
                     map_marker_array_msg.markers[current_height_level].colors.push_back(heightMapColor(h));
                 }
-		        elevation_cost = floor ( 255/(height_max - height_min)*(cube_center.z - height_min) );
-		        //ROS_INFO("elevation_cost = %f",elevation_cost);
-		        elevation_cost = std::min(elevation_cost,254.0);
-		        elevation_cost = std::max(elevation_cost,0.0);
-		        map_cost = (int8_t) floor(elevation_cost/254*100);
-		        //ROS_INFO("map cost = %d",map_cost);
+                elevation_cost = floor ( 255/(height_max - height_min)*(cube_center.z - height_min) );
+                elevation_cost = std::min(elevation_cost,254.0);
+                elevation_cost = std::max(elevation_cost,0.0);
+                map_cost = (int8_t) floor(elevation_cost/254*100);
+                elev_c_map->setCost_WC(cube_center.x,cube_center.y, map_cost);
+                //ROS_INFO("map cost = %d",map_cost);
 		
-		
-
-		
-		        if (index_x - 511 - x_offset > 0)
-			        index_x_cell = index_x - 511 - x_offset;
-		        else
-			        index_x_cell = 1;
-		        if (index_x_cell > cell_elevation_x) index_x_cell = cell_elevation_x;
+                if (index_x - 511 - x_offset > 0)
+                  index_x_cell = index_x - 511 - x_offset;
+                else
+                  index_x_cell = 1;
+                if (index_x_cell > cell_elevation_x) index_x_cell = cell_elevation_x;
 		
 		
                 if ((0 < index_x_cell) && (index_x_cell <= cell_elevation_x) && (0 < index_y_cell) && (index_y_cell <= cell_elevation_y))
-		        {
-			        setCost(index_x_cell,index_y_cell,map_cost);			
-		        }
-		
+                {
+                  setCost(index_x_cell,index_y_cell,map_cost);
+                }
             }
         }
 	
     }
+    //elev_map = elev_c_map->getROSmsg(); // overriding the prev calculation with costmap
     elev_map.header.stamp = ros::Time::now();
     elev_map.header.frame_id = std::string("/base_link");
+
     Map_publisher.publish(elev_map);
     EcostmapMeta_publisher.publish(ecostmap_meta);
 
